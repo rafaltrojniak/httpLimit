@@ -22,6 +22,7 @@ $limit->setConfig(
 		),
 		'lifetime'=>60,
 		'resolution'=>5,
+		'closeConnection'=>true,
 	)
 );
 $ret=$limit->run();

@@ -42,6 +42,16 @@ class httpLimit{
 	private $drift = 10;
 
 	/**
+	 * HTTP code returned if reached limit 
+	 */
+	private $returnCode = 403;
+
+	/**
+	 * Send Close: header to close keep-alive connection 
+	 */
+	private $closeConnection=false;
+
+	/**
 	 * Sets full configuration array 
 	 * 
 	 * @param $config 
@@ -84,12 +94,21 @@ class httpLimit{
 
 		if(isset($quietMemcacheFail))
 			$this->quietMemcacheFail=(bool)$quietMemcacheFail;
+
+		if(isset($returnCode))
+			$this->returnCode=(int)$returnCode;
+
+		if(isset($closeConnection))
+			$this->closeConnection=(bool)$closeConnection;
 	}
 
 	public function run()
 	{
+		// Init connection
 		$con=new Memcached(true);
 		if(!$con->addServer($this->server['host'],$this->server['port'])){
+			if($this->quietMemcacheFail)
+				return;
 			throw new Exception('Failed to connect to memcached server');
 		}
 
@@ -124,6 +143,7 @@ class httpLimit{
 			$start+=$this->resolution;
 		}
 
+		// Set if empty
 		if(count($multiSet)){
 			$con->setMulti($multiSet,$stop+$this->drift);
 		}
@@ -137,7 +157,10 @@ class httpLimit{
 		}
 
 		if($value>$limit){
-			header("HTTP/1.0 403 Too many requests");
+			header("HTTP/1.0 $this->returnCode Too many requests");
+			if($this->closeConnection){
+				header('Connection: Close');
+			}
 			die();
 		}
 		return $values;
