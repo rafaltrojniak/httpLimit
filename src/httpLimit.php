@@ -37,6 +37,11 @@ class httpLimit{
 	private $quietMemcacheFail;
 
 	/**
+	 * Clock drift
+	 */
+	private $drift = 10;
+
+	/**
 	 * Sets full configuration array 
 	 * 
 	 * @param $config 
@@ -81,16 +86,23 @@ class httpLimit{
 			$this->quietMemcacheFail=(bool)$quietMemcacheFail;
 	}
 
-	public function runCheck()
+	public function run()
 	{
 		$con=new Memcached(true);
-		$con->addServer($this->server['host'],$this->server['port']);
-
-		// gen key
-		$key=$this->prefix;
-		foreach($this->keys as $field){
-			$key.='|'.$field;
+		if(!$con->addServer($this->server['host'],$this->server['port'])){
+			throw new Exception('Failed to connect to memcached server');
 		}
+
+		$limit=$this->limits['default'];
+		// gen key, set limit
+		$key=null;
+		foreach($this->keys as $field){
+			$key.='|'.$_SERVER[$field];
+			if(isset($this->limits[$field]) and isset($this->limits[$field][$_SERVER[$field]])){
+				$limit=$this->limits[$field][$_SERVER[$field]];
+			}
+		}
+		$key=$this->prefix.base64_encode(sha1($key,true));
 
 		// gen time period
 		$start=time();
@@ -99,30 +111,36 @@ class httpLimit{
 
 		// Inc values
 		$values=array();
+		$multiSet=array();
 		while($start<$stop){
 			$token=$start.$key;
-			$values[]=$con->increment($token);
+			$value=$con->increment($token);
+			if($value==false and $con->getResultCode()==Memcached::RES_NOTFOUND)
+			{
+				$multiSet[$token]=1;
+				$value=1;
+			}
+			$values[]=$value;
 			$start+=$this->resolution;
 		}
 
+		if(count($multiSet)){
+			$con->setMulti($multiSet,$stop+$this->drift);
+		}
+
 		$value=$values[0];
-		if($value==Memcached::RES_NOTFOUND or $value===false){
+		if($value===false){
 			if($this->quietMemcacheFail)
 				return;
 			throw new Exception('Failed to increment value, got'.
 				print_r($value,true));
 		}
 
-		$limit=$this->limits['default'];
-		if(isset($this->limits[$key])){
-			$limit=$this->limits[$key];
-		}
-
 		if($value>$limit){
 			header("HTTP/1.0 403 Too many requests");
 			die();
 		}
-
+		return $values;
 	}
 
 }
